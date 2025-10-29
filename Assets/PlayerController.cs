@@ -6,7 +6,6 @@ public class PlayerController : MonoBehaviour
 {
     private Rigidbody2D rb;
 
-
     [SerializeField] private float walkSpeed = 1f;
     [SerializeField] private float jumpForce = 15f;
 
@@ -26,11 +25,10 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private Transform wallCheckLeft;
     [SerializeField] private Transform wallCheckRight;
     [SerializeField] private float wallCheckDistance = 0.1f;
+    [SerializeField] private float wallCheckRadius = 0.5f;
     [SerializeField] private LayerMask wallLayer;
     [SerializeField] private float wallSlideSpeed = 0.5f;
     [SerializeField] private float wallJumpPush = 10f;
-    [SerializeField] private float wallCheckRadius = 0.1f;
-
 
     private bool isTouchingWallLeft;
     private bool isTouchingWallRight;
@@ -47,15 +45,15 @@ public class PlayerController : MonoBehaviour
     void Update()
     {
         GetControls();
-        CheckJump();
         CheckWallTouch();
+        CheckJump();
 
+        // Manual wall jump debug
         if (Input.GetKeyDown(KeyCode.T))
         {
             Debug.Log("Manual Wall Jump Test");
             WallJump();
         }
-
     }
 
     void FixedUpdate()
@@ -72,38 +70,41 @@ public class PlayerController : MonoBehaviour
 
     void CheckJump()
     {
-        if (Input.GetButtonDown("Jump") && (isGrounded() || Time.time - lastWallTime < wallJumpGraceTime))
+        // Use KeyCode.Space for now to debug input issue
+        if (Input.GetKeyDown(KeyCode.Space) && (isGrounded() || Time.time - lastWallTime < wallJumpGraceTime))
         {
+            Debug.Log("Jump button pressed");
+
             isJumping = true;
             jumpTimeCounter = jumpTimeMax;
 
             if (IsOnWall() && !isGrounded())
             {
-                // If we're on a wall, perform a wall jump (push away horizontally + vertical)
+                Debug.Log("Wall Jump condition met");
                 WallJump();
             }
             else
             {
-                // Normal ground jump
+                Debug.Log("Ground Jump triggered");
                 Jump();
             }
         }
 
-        if(Input.GetButton("Jump") && isJumping)
+        // Only apply held jump logic if grounded
+        if (Input.GetKey(KeyCode.Space) && isJumping && isGrounded())
         {
-            if(jumpTimeCounter > 0)
+            if (jumpTimeCounter > 0)
             {
                 Jump();
                 jumpTimeCounter -= Time.deltaTime;
             }
-
             else
             {
                 isJumping = false;
             }
         }
 
-        if(Input.GetButtonUp("Jump"))
+        if (Input.GetKeyUp(KeyCode.Space))
         {
             isJumping = false;
         }
@@ -111,14 +112,18 @@ public class PlayerController : MonoBehaviour
 
     void CheckWallTouch()
     {
-        // Debug ray draw
         Debug.DrawRay(wallCheckLeft.position, Vector2.left * wallCheckDistance, Color.red);
         Debug.DrawRay(wallCheckRight.position, Vector2.right * wallCheckDistance, Color.blue);
 
         isTouchingWallLeft = Physics2D.OverlapCircle(wallCheckLeft.position, wallCheckRadius, wallLayer);
         isTouchingWallRight = Physics2D.OverlapCircle(wallCheckRight.position, wallCheckRadius, wallLayer);
-    }
 
+        if (isTouchingWallLeft || isTouchingWallRight)
+        {
+            lastWallTime = Time.time;
+            Debug.Log("Touching Wall: " + (isTouchingWallLeft ? "Left" : "Right"));
+        }
+    }
 
     private void Move()
     {
@@ -133,6 +138,7 @@ public class PlayerController : MonoBehaviour
         if ((pushingIntoLeftWall || pushingIntoRightWall) && !isGrounded() && rb.linearVelocity.y < 0)
         {
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed));
+            Debug.Log("Wall Sliding");
         }
     }
 
@@ -145,13 +151,15 @@ public class PlayerController : MonoBehaviour
 
         Debug.Log($"Wall Jump! Dir: {horizontalDir}, TouchLeft: {isTouchingWallLeft}, TouchRight: {isTouchingWallRight}");
 
-        // Failsafe: if no wall detected, abort
         if (horizontalDir == 0f)
+        {
+            Debug.Log("WallJump aborted: no wall detected.");
             return;
+        }
 
-        rb.linearVelocity = new Vector2(horizontalDir * wallJumpPush, jumpForce);
+        // Stronger push
+        rb.linearVelocity = new Vector2(horizontalDir * wallJumpPush, jumpForce * 1.1f);
     }
-
 
     private void Jump()
     {
@@ -161,29 +169,17 @@ public class PlayerController : MonoBehaviour
     private bool isGrounded()
     {
         Collider2D hit = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
-        //Debug.Log(hit ? $"Grounded on: {hit.name}" : "Not grounded");
         return hit != null;
-    }
-
-    private void OnDrawGizmosSelected()
-    {
-        if (groundCheck != null)
-        {
-            Gizmos.color = Color.green;
-            Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
-        }
     }
 
     private void ApplyGravityControl()
     {
         if (rb.linearVelocity.y < 0)
         {
-            // Faster fall
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.fixedDeltaTime;
         }
-        else if (rb.linearVelocity.y > 0 && !Input.GetButton("Jump"))
+        else if (rb.linearVelocity.y > 0 && !Input.GetKey(KeyCode.Space))
         {
-            // Cut jump short if released early
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.fixedDeltaTime;
         }
     }
@@ -206,7 +202,11 @@ public class PlayerController : MonoBehaviour
             Gizmos.color = Color.blue;
             Gizmos.DrawLine(wallCheckRight.position, wallCheckRight.position + Vector3.right * wallCheckDistance);
         }
+
+        if (groundCheck != null)
+        {
+            Gizmos.color = Color.green;
+            Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
+        }
     }
-
-
 }

@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -7,7 +7,7 @@ public class PlayerController : MonoBehaviour
     private Rigidbody2D rb;
 
     [SerializeField] private float walkSpeed = 1f;
-    [SerializeField] private float jumpForce = 15f;
+    [SerializeField] private float jumpForce = 16f;
 
     private float xAxis;
 
@@ -17,9 +17,9 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private LayerMask groundLayer;
 
     [Header("Jump Settings")]
-    [SerializeField] private float jumpTimeMax = 0.3f;
-    [SerializeField] private float fallMultiplier = 3.5f;
-    [SerializeField] private float lowJumpMultiplier = 5f;
+    [SerializeField] private float jumpTimeMax = 0.2f;
+    [SerializeField] private float fallMultiplier = 4.5f;
+    [SerializeField] private float lowJumpMultiplier = 6f;
 
     [Header("Wall Check")]
     [SerializeField] private Transform wallCheckLeft;
@@ -29,6 +29,12 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private LayerMask wallLayer;
     [SerializeField] private float wallSlideSpeed = 0.5f;
     [SerializeField] private float wallJumpPush = 10f;
+
+    [Header("Wall Stick")]
+    [SerializeField] private float wallStickTime = 1f; // Time to stick after unlatching
+    private float wallStickCounter;
+    private bool isWallSticking;
+
 
     private bool isTouchingWallLeft;
     private bool isTouchingWallRight;
@@ -91,7 +97,7 @@ public class PlayerController : MonoBehaviour
         }
 
         // Only apply held jump logic if grounded
-        if (Input.GetKey(KeyCode.Space) && isJumping && isGrounded())
+        if (Input.GetKey(KeyCode.Space) && isJumping)
         {
             if (jumpTimeCounter > 0)
             {
@@ -132,15 +138,43 @@ public class PlayerController : MonoBehaviour
 
     private void WallSlide()
     {
-        bool pushingIntoLeftWall = isTouchingWallLeft && xAxis < 0;
-        bool pushingIntoRightWall = isTouchingWallRight && xAxis > 0;
+        bool onWall = IsOnWall();
+        bool falling = rb.linearVelocity.y < 0;
 
-        if ((pushingIntoLeftWall || pushingIntoRightWall) && !isGrounded() && rb.linearVelocity.y < 0)
+        if (onWall && !isGrounded() && falling)
         {
-            rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed));
-            Debug.Log("Wall Sliding");
+            if (xAxis != 0)
+            {
+                // Player is pressing toward wall — actively sliding
+                wallStickCounter = wallStickTime;
+                isWallSticking = true;
+
+                rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed));
+                Debug.Log("Wall Sliding - Pressing Into Wall");
+            }
+            else
+            {
+                // Not pressing into wall — start wall stick timer
+                if (wallStickCounter > 0)
+                {
+                    wallStickCounter -= Time.fixedDeltaTime;
+                    isWallSticking = true;
+
+                    rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
+                    Debug.Log("Wall Stick - Not Pressing Direction");
+                }
+                else
+                {
+                    isWallSticking = false;
+                }
+            }
+        }
+        else
+        {
+            isWallSticking = false;
         }
     }
+
 
     private void WallJump()
     {
@@ -156,6 +190,9 @@ public class PlayerController : MonoBehaviour
             Debug.Log("WallJump aborted: no wall detected.");
             return;
         }
+
+        jumpTimeCounter = jumpTimeMax;   // ✅ let the player hold jump to go higher
+        isJumping = true;
 
         // Stronger push
         rb.linearVelocity = new Vector2(horizontalDir * wallJumpPush, jumpForce * 1.1f);
@@ -174,6 +211,9 @@ public class PlayerController : MonoBehaviour
 
     private void ApplyGravityControl()
     {
+        if (isWallSticking)
+            return; // Skip gravity if wall sticking
+
         if (rb.linearVelocity.y < 0)
         {
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (fallMultiplier - 1) * Time.fixedDeltaTime;
@@ -183,6 +223,7 @@ public class PlayerController : MonoBehaviour
             rb.linearVelocity += Vector2.up * Physics2D.gravity.y * (lowJumpMultiplier - 1) * Time.fixedDeltaTime;
         }
     }
+
 
     private bool IsOnWall()
     {

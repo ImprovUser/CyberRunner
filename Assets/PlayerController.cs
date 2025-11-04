@@ -1,102 +1,147 @@
-﻿using System.Collections;
-using System.Collections.Generic;
+﻿// REFACTORED PLAYER CONTROLLER USING FINITE STATE MACHINE
+
+using System.Collections;
 using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
     private Rigidbody2D rb;
 
+    [Header("Movement")]
     [SerializeField] private float walkSpeed = 1f;
     [SerializeField] private float jumpForce = 16f;
-
     private float xAxis;
+
+    [Header("Gravity")]
+    [SerializeField] private float fallMultiplier = 4.5f;
+    [SerializeField] private float lowJumpMultiplier = 6f;
 
     [Header("Ground Check")]
     [SerializeField] private Transform groundCheck;
     [SerializeField] private float groundCheckRadius = 0.2f;
     [SerializeField] private LayerMask groundLayer;
 
-    [Header("Jump Settings")]
-    [SerializeField] private float jumpTimeMax = 0.2f;
-    [SerializeField] private float fallMultiplier = 4.5f;
-    [SerializeField] private float lowJumpMultiplier = 6f;
-
     [Header("Wall Check")]
     [SerializeField] private Transform wallCheckLeft;
     [SerializeField] private Transform wallCheckRight;
-    [SerializeField] private float wallCheckDistance = 0.1f;
     [SerializeField] private float wallCheckRadius = 0.5f;
     [SerializeField] private LayerMask wallLayer;
-    [SerializeField] private float wallSlideSpeed = 0.5f;
+
+    [Header("Wall Slide")]
+    [SerializeField] private float wallStickTime = 1f;
+    [SerializeField] private float wallSlideMinSpeed = 0.5f;
+    [SerializeField] private float maxFallSpeed = 10f;
+    [SerializeField] private float wallSlideAcceleration = 5f;
+    [SerializeField] private float wallLatchTime = 0.2f;
+
+    [Header("Wall Jump")]
     [SerializeField] private float wallJumpPush = 10f;
+    [SerializeField] private float wallJumpOverrideTime = 0.15f;
 
-    [Header("Wall Stick")]
-    [SerializeField] private float wallStickTime = 1f; // Time to stick after unlatching
     private float wallStickCounter;
-    private bool isWallSticking;
+    private float wallSlideTimer;
+    private float wallJumpTimer;
+    private float jumpTimeCounter;
+    private float wallLatchCounter;
 
-
+    private bool isJumping;
     private bool isTouchingWallLeft;
     private bool isTouchingWallRight;
-    private float jumpTimeCounter;
-    private bool isJumping;
-    private float wallJumpGraceTime = 0.2f;
     private float lastWallTime;
+    private int lastWallDir;
 
-    void Start()
+    private enum PlayerState { Grounded, Jumping, Falling, WallSliding, WallJumping }
+    private PlayerState currentState;
+
+    private void Start()
     {
         rb = GetComponent<Rigidbody2D>();
+        currentState = PlayerState.Falling;
     }
 
-    void Update()
+    private void Update()
     {
-        GetControls();
+        xAxis = Input.GetAxisRaw("Horizontal");
         CheckWallTouch();
-        CheckJump();
-
-        // Manual wall jump debug
-        if (Input.GetKeyDown(KeyCode.T))
-        {
-            Debug.Log("Manual Wall Jump Test");
-            WallJump();
-        }
+        HandleJumpInput();
     }
 
-    void FixedUpdate()
+    private void FixedUpdate()
     {
-        Move();
-        WallSlide();
+
+   
+        UpdateState();
+
+        switch (currentState)
+        {
+            case PlayerState.Grounded:
+                Move();
+                break;
+            case PlayerState.WallSliding:
+                WallSlide();
+                Move();
+                break;
+            case PlayerState.WallJumping:
+                wallJumpTimer -= Time.fixedDeltaTime;
+                break;
+            case PlayerState.Falling:
+            case PlayerState.Jumping:
+                Move();
+                break;
+        }
+
         ApplyGravityControl();
     }
 
-    void GetControls()
+    private void UpdateState()
     {
-        xAxis = Input.GetAxisRaw("Horizontal");
+        bool grounded = IsGrounded();
+        bool onWall = IsOnWall();
+
+        if (wallJumpTimer > 0)
+        {
+            currentState = PlayerState.WallJumping;
+        }
+        else if (grounded)
+        {
+            currentState = PlayerState.Grounded;
+        }
+        else if (onWall && rb.linearVelocity.y < 0)
+        {
+            // Only reset latch timer when transitioning *into* WallSliding
+            if (currentState != PlayerState.WallSliding)
+            {
+                wallLatchCounter = wallLatchTime;
+            }
+
+            currentState = PlayerState.WallSliding;
+        }
+        else if (rb.linearVelocity.y > 0)
+        {
+            currentState = PlayerState.Jumping;
+        }
+        else
+        {
+            currentState = PlayerState.Falling;
+        }
     }
 
-    void CheckJump()
+    private void HandleJumpInput()
     {
-        // Use KeyCode.Space for now to debug input issue
-        if (Input.GetKeyDown(KeyCode.Space) && (isGrounded() || Time.time - lastWallTime < wallJumpGraceTime))
+        if (Input.GetKeyDown(KeyCode.Space))
         {
-            Debug.Log("Jump button pressed");
-
-            isJumping = true;
-            jumpTimeCounter = jumpTimeMax;
-
-            if (IsOnWall() && !isGrounded())
+            if (IsOnWall() && !IsGrounded())
             {
-                Debug.Log("Wall Jump condition met");
                 WallJump();
             }
-            else
+            else if (IsGrounded())
             {
-                Debug.Log("Ground Jump triggered");
+                isJumping = true;
+                jumpTimeCounter = 0.2f;
                 Jump();
             }
         }
 
-        // Only apply held jump logic if grounded
         if (Input.GetKey(KeyCode.Space) && isJumping)
         {
             if (jumpTimeCounter > 0)
@@ -116,21 +161,6 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    void CheckWallTouch()
-    {
-        Debug.DrawRay(wallCheckLeft.position, Vector2.left * wallCheckDistance, Color.red);
-        Debug.DrawRay(wallCheckRight.position, Vector2.right * wallCheckDistance, Color.blue);
-
-        isTouchingWallLeft = Physics2D.OverlapCircle(wallCheckLeft.position, wallCheckRadius, wallLayer);
-        isTouchingWallRight = Physics2D.OverlapCircle(wallCheckRight.position, wallCheckRadius, wallLayer);
-
-        if (isTouchingWallLeft || isTouchingWallRight)
-        {
-            lastWallTime = Time.time;
-            Debug.Log("Touching Wall: " + (isTouchingWallLeft ? "Left" : "Right"));
-        }
-    }
-
     private void Move()
     {
         rb.linearVelocity = new Vector2(walkSpeed * xAxis, rb.linearVelocity.y);
@@ -138,64 +168,51 @@ public class PlayerController : MonoBehaviour
 
     private void WallSlide()
     {
-        bool onWall = IsOnWall();
-        bool falling = rb.linearVelocity.y < 0;
+        bool pressingIntoWall = (isTouchingWallLeft && xAxis < 0) || (isTouchingWallRight && xAxis > 0);
 
-        if (onWall && !isGrounded() && falling)
+        if (pressingIntoWall)
         {
-            if (xAxis != 0)
-            {
-                // Player is pressing toward wall — actively sliding
-                wallStickCounter = wallStickTime;
-                isWallSticking = true;
-
-                rb.linearVelocity = new Vector2(rb.linearVelocity.x, Mathf.Max(rb.linearVelocity.y, -wallSlideSpeed));
-                Debug.Log("Wall Sliding - Pressing Into Wall");
-            }
-            else
-            {
-                // Not pressing into wall — start wall stick timer
-                if (wallStickCounter > 0)
-                {
-                    wallStickCounter -= Time.fixedDeltaTime;
-                    isWallSticking = true;
-
-                    rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
-                    Debug.Log("Wall Stick - Not Pressing Direction");
-                }
-                else
-                {
-                    isWallSticking = false;
-                }
-            }
+            wallStickCounter = wallStickTime;
+            wallSlideTimer = 0f;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
+            Debug.Log("Wall Slide: Holding onto wall (stick time)");
+        }
+        else if (wallLatchCounter > 0)
+        {
+            wallLatchCounter -= Time.fixedDeltaTime;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
+            Debug.Log($"Wall Slide: Latching phase ({wallLatchCounter:F2}s left)");
+        }
+        else if (wallStickCounter > 0)
+        {
+            wallStickCounter -= Time.fixedDeltaTime;
+            wallSlideTimer = 0f;
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
+            Debug.Log($"Wall Slide: Grace period active ({wallStickCounter:F2}s left)");
         }
         else
         {
-            isWallSticking = false;
+            wallSlideTimer += Time.fixedDeltaTime;
+
+            // Accelerate sliding downward over time
+            float slideSpeed = Mathf.Lerp(wallSlideMinSpeed, maxFallSpeed, wallSlideTimer * wallSlideAcceleration);
+            slideSpeed = Mathf.Min(slideSpeed, maxFallSpeed);
+
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x, -slideSpeed);
+            Debug.Log($"Wall Slide: Sliding down – speed = {slideSpeed:F2}");
         }
     }
 
-
     private void WallJump()
     {
-        float horizontalDir = 0f;
+        float jumpDir = lastWallDir;
+        if (jumpDir == 0) return;
 
-        if (isTouchingWallLeft) horizontalDir = 1f;
-        else if (isTouchingWallRight) horizontalDir = -1f;
+        float jumpX = jumpDir * wallJumpPush;
+        float jumpY = jumpForce * 1.6f;
 
-        Debug.Log($"Wall Jump! Dir: {horizontalDir}, TouchLeft: {isTouchingWallLeft}, TouchRight: {isTouchingWallRight}");
-
-        if (horizontalDir == 0f)
-        {
-            Debug.Log("WallJump aborted: no wall detected.");
-            return;
-        }
-
-        jumpTimeCounter = jumpTimeMax;   // ✅ let the player hold jump to go higher
-        isJumping = true;
-
-        // Stronger push
-        rb.linearVelocity = new Vector2(horizontalDir * wallJumpPush, jumpForce * 1.1f);
+        rb.linearVelocity = new Vector2(jumpX, jumpY);
+        wallJumpTimer = wallJumpOverrideTime;
     }
 
     private void Jump()
@@ -203,16 +220,10 @@ public class PlayerController : MonoBehaviour
         rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce);
     }
 
-    private bool isGrounded()
-    {
-        Collider2D hit = Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
-        return hit != null;
-    }
-
     private void ApplyGravityControl()
     {
-        if (isWallSticking)
-            return; // Skip gravity if wall sticking
+        if (currentState == PlayerState.WallSliding && (wallLatchCounter > 0 || wallStickCounter > 0))
+            return; // freeze gravity during latch or grace period
 
         if (rb.linearVelocity.y < 0)
         {
@@ -224,6 +235,31 @@ public class PlayerController : MonoBehaviour
         }
     }
 
+    private void CheckWallTouch()
+    {
+        isTouchingWallLeft = Physics2D.OverlapCircle(wallCheckLeft.position, wallCheckRadius, wallLayer);
+        isTouchingWallRight = Physics2D.OverlapCircle(wallCheckRight.position, wallCheckRadius, wallLayer);
+
+        if (isTouchingWallLeft) lastWallDir = 1;
+        else if (isTouchingWallRight) lastWallDir = -1;
+
+        if (isTouchingWallLeft || isTouchingWallRight)
+        {
+            lastWallTime = Time.time;
+
+            // Reset wall latch only on first wall contact
+            if (currentState != PlayerState.WallSliding)
+            {
+                wallLatchCounter = wallLatchTime;
+                Debug.Log($"Wall latch started: {wallLatchTime}s");
+            }
+        }
+    }
+
+    private bool IsGrounded()
+    {
+        return Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
+    }
 
     private bool IsOnWall()
     {
@@ -232,22 +268,20 @@ public class PlayerController : MonoBehaviour
 
     private void OnDrawGizmos()
     {
-        if (wallCheckLeft != null)
-        {
-            Gizmos.color = Color.red;
-            Gizmos.DrawLine(wallCheckLeft.position, wallCheckLeft.position + Vector3.left * wallCheckDistance);
-        }
-
-        if (wallCheckRight != null)
-        {
-            Gizmos.color = Color.blue;
-            Gizmos.DrawLine(wallCheckRight.position, wallCheckRight.position + Vector3.right * wallCheckDistance);
-        }
-
         if (groundCheck != null)
         {
             Gizmos.color = Color.green;
             Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
+        }
+        if (wallCheckLeft != null)
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawWireSphere(wallCheckLeft.position, wallCheckRadius);
+        }
+        if (wallCheckRight != null)
+        {
+            Gizmos.color = Color.blue;
+            Gizmos.DrawWireSphere(wallCheckRight.position, wallCheckRadius);
         }
     }
 }

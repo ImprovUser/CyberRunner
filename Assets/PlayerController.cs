@@ -1,6 +1,4 @@
-﻿// REFACTORED PLAYER CONTROLLER USING FINITE STATE MACHINE
-
-using System.Collections;
+﻿using System.Collections;
 using UnityEngine;
 
 public class PlayerController : MonoBehaviour
@@ -8,31 +6,36 @@ public class PlayerController : MonoBehaviour
     private Rigidbody2D rb;
 
     [Header("Movement")]
-    [SerializeField] private float walkSpeed = 1f;
-    [SerializeField] private float jumpForce = 16f;
+    private float walkSpeed = 4f;
+    private float runSpeed = 9f;
+    private float sprintSpeed = 13.5f;
+    private float currentMoveSpeed;
+    private float jumpForce = 21f;
     private float xAxis;
 
     [Header("Gravity")]
-    [SerializeField] private float fallMultiplier = 4.5f;
-    [SerializeField] private float lowJumpMultiplier = 6f;
+    private float fallMultiplier = 4.5f;
+    private float lowJumpMultiplier = 6f;
 
     [Header("Ground Check")]
-    [SerializeField] private Transform groundCheck;
-    [SerializeField] private float groundCheckRadius = 0.2f;
+
     [SerializeField] private LayerMask groundLayer;
+    private Vector2 groundCheckSize = new Vector2(0.92f, 0.42f);
+    private float castDistance = 1f;
 
     [Header("Wall Check")]
-    [SerializeField] private Transform wallCheckLeft;
-    [SerializeField] private Transform wallCheckRight;
-    [SerializeField] private float wallCheckRadius = 0.5f;
+    private Vector2 wallLCheckSize = new Vector2(0.54f, 1.76f);
+    private Vector2 wallRCheckSize = new Vector2(0.54f, 1.76f);
     [SerializeField] private LayerMask wallLayer;
+    private float wallLCastDistance = 0.5f;
+    private float wallRCastDistance = 0.5f;
 
     [Header("Wall Slide")]
-    [SerializeField] private float wallStickTime = 1f;
-    [SerializeField] private float wallSlideMinSpeed = 0.5f;
-    [SerializeField] private float maxFallSpeed = 10f;
-    [SerializeField] private float wallSlideAcceleration = 5f;
-    [SerializeField] private float wallLatchTime = 0.2f;
+    private float wallStickTime = 0.5f;
+    private float wallSlideMinSpeed = 0.5f;
+    private float maxFallSpeed = 10f;
+    private float wallSlideAcceleration = 5f;
+    private float wallLatchTime = 0.2f;
 
     [Header("Wall Jump")]
     [SerializeField] private float wallJumpPush = 10f;
@@ -44,7 +47,6 @@ public class PlayerController : MonoBehaviour
     private float jumpTimeCounter;
     private float wallLatchCounter;
 
-    private bool isJumping;
     private bool isTouchingWallLeft;
     private bool isTouchingWallRight;
     private float lastWallTime;
@@ -62,6 +64,7 @@ public class PlayerController : MonoBehaviour
     private void Update()
     {
         xAxis = Input.GetAxisRaw("Horizontal");
+        UpdateMovementSpeed();
         CheckWallTouch();
         HandleJumpInput();
     }
@@ -95,18 +98,16 @@ public class PlayerController : MonoBehaviour
 
     private void UpdateState()
     {
-        bool grounded = IsGrounded();
-        bool onWall = IsOnWall();
-
+        
         if (wallJumpTimer > 0)
         {
             currentState = PlayerState.WallJumping;
         }
-        else if (grounded)
+        else if (IsGrounded())
         {
             currentState = PlayerState.Grounded;
         }
-        else if (onWall && rb.linearVelocity.y < 0)
+        else if (IsOnWall() && !IsGrounded() && rb.linearVelocity.y <= 0)
         {
             // Only reset latch timer when transitioning *into* WallSliding
             if (currentState != PlayerState.WallSliding)
@@ -124,71 +125,80 @@ public class PlayerController : MonoBehaviour
         {
             currentState = PlayerState.Falling;
         }
+        Debug.Log("Current State: " + currentState);
     }
 
     private void HandleJumpInput()
     {
         if (Input.GetKeyDown(KeyCode.Space))
         {
-            if (IsOnWall() && !IsGrounded())
+            if (currentState == PlayerState.WallSliding)
             {
                 WallJump();
             }
-            else if (IsGrounded())
+            else if (currentState == PlayerState.Grounded)
             {
-                isJumping = true;
+                
                 jumpTimeCounter = 0.2f;
                 Jump();
             }
         }
 
-        if (Input.GetKey(KeyCode.Space) && isJumping)
+        if (Input.GetKey(KeyCode.Space) && currentState == PlayerState.Jumping)
         {
             if (jumpTimeCounter > 0)
             {
                 Jump();
                 jumpTimeCounter -= Time.deltaTime;
             }
-            else
-            {
-                isJumping = false;
-            }
-        }
-
-        if (Input.GetKeyUp(KeyCode.Space))
-        {
-            isJumping = false;
         }
     }
-
+    private void UpdateMovementSpeed()
+    {
+        if (Input.GetKey(KeyCode.LeftControl))
+        {
+            currentMoveSpeed = walkSpeed;
+        }
+        else if (Input.GetKey(KeyCode.LeftShift))
+        {
+            currentMoveSpeed = sprintSpeed;
+        }
+        else
+        {
+            currentMoveSpeed = runSpeed;
+        }
+    }
     private void Move()
     {
-        rb.linearVelocity = new Vector2(walkSpeed * xAxis, rb.linearVelocity.y);
+        rb.linearVelocity = new Vector2(currentMoveSpeed * xAxis, rb.linearVelocity.y);
+    }
+
+    private bool LatchingWall()
+    {
+        return (isTouchingWallLeft && xAxis < 0) || (isTouchingWallRight && xAxis > 0);
     }
 
     private void WallSlide()
     {
-        bool pressingIntoWall = (isTouchingWallLeft && xAxis < 0) || (isTouchingWallRight && xAxis > 0);
-
-        if (pressingIntoWall)
+        if (LatchingWall())
         {
             wallStickCounter = wallStickTime;
             wallSlideTimer = 0f;
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
-            Debug.Log("Wall Slide: Holding onto wall (stick time)");
+           // Debug.Log("Wall Slide: Holding onto wall (stick time)");
         }
         else if (wallLatchCounter > 0)
         {
             wallLatchCounter -= Time.fixedDeltaTime;
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
-            Debug.Log($"Wall Slide: Latching phase ({wallLatchCounter:F2}s left)");
+           // Debug.Log($"Wall Slide: Latching phase ({wallLatchCounter:F2}s left)");
         }
         else if (wallStickCounter > 0)
         {
             wallStickCounter -= Time.fixedDeltaTime;
             wallSlideTimer = 0f;
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, 0f);
-            Debug.Log($"Wall Slide: Grace period active ({wallStickCounter:F2}s left)");
+           // Debug.Log($"Wall Slide: Grace period active ({wallStickCounter:F2}s left)");
         }
         else
         {
@@ -199,7 +209,7 @@ public class PlayerController : MonoBehaviour
             slideSpeed = Mathf.Min(slideSpeed, maxFallSpeed);
 
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, -slideSpeed);
-            Debug.Log($"Wall Slide: Sliding down – speed = {slideSpeed:F2}");
+           // Debug.Log($"Wall Slide: Sliding down – speed = {slideSpeed:F2}");
         }
     }
 
@@ -237,8 +247,8 @@ public class PlayerController : MonoBehaviour
 
     private void CheckWallTouch()
     {
-        isTouchingWallLeft = Physics2D.OverlapCircle(wallCheckLeft.position, wallCheckRadius, wallLayer);
-        isTouchingWallRight = Physics2D.OverlapCircle(wallCheckRight.position, wallCheckRadius, wallLayer);
+        isTouchingWallLeft = Physics2D.BoxCast(transform.position, wallLCheckSize, 0, -transform.right, wallLCastDistance, wallLayer);
+        isTouchingWallRight = Physics2D.BoxCast(transform.position, wallRCheckSize, 0, transform.right, wallRCastDistance, wallLayer);
 
         if (isTouchingWallLeft) lastWallDir = 1;
         else if (isTouchingWallRight) lastWallDir = -1;
@@ -251,37 +261,26 @@ public class PlayerController : MonoBehaviour
             if (currentState != PlayerState.WallSliding)
             {
                 wallLatchCounter = wallLatchTime;
-                Debug.Log($"Wall latch started: {wallLatchTime}s");
+                //Debug.Log($"Wall latch started: {wallLatchTime}s");
             }
         }
     }
 
     private bool IsGrounded()
     {
-        return Physics2D.OverlapCircle(groundCheck.position, groundCheckRadius, groundLayer);
+        return Physics2D.BoxCast(transform.position,groundCheckSize, 0, -transform.up, castDistance, groundLayer);
     }
 
     private bool IsOnWall()
     {
         return isTouchingWallLeft || isTouchingWallRight;
     }
-
     private void OnDrawGizmos()
     {
-        if (groundCheck != null)
-        {
-            Gizmos.color = Color.green;
-            Gizmos.DrawWireSphere(groundCheck.position, groundCheckRadius);
-        }
-        if (wallCheckLeft != null)
-        {
-            Gizmos.color = Color.red;
-            Gizmos.DrawWireSphere(wallCheckLeft.position, wallCheckRadius);
-        }
-        if (wallCheckRight != null)
-        {
-            Gizmos.color = Color.blue;
-            Gizmos.DrawWireSphere(wallCheckRight.position, wallCheckRadius);
-        }
+        Gizmos.DrawWireCube(transform.position-transform.up * castDistance, groundCheckSize);
+        Gizmos.DrawWireCube(transform.position - Vector3.right * wallLCastDistance, wallLCheckSize);
+        Gizmos.DrawWireCube(transform.position + Vector3.right * wallRCastDistance, wallRCheckSize);
+
     }
+
 }
